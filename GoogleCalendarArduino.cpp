@@ -34,26 +34,22 @@ String RFC3339String(time_t time) {
          String(second(time)) + "-07%3A00";
 }
 
-int GoogleCalendar::ListEvents(WiFiClientSecure& client, const String& accessToken) {
+int GoogleCalendar::ListEvents(WiFiClientSecure& client, const String& accessToken,
+                               GoogleCalendarEvent* events, size_t eventCount) {
   String command =
     "GET https://www.googleapis.com/calendar/v3/calendars/primary/events?" \
     "orderBy=startTime" \
     "&singleEvents=true";
 
-  Serial.println("Time: ");
-  Serial.println(year());
-  Serial.println(month());
-  Serial.println(day());
-  Serial.println(hour());
-
   command += "&timeMin=" + RFC3339String(now());
   command += "&timeMax=" + RFC3339String(now() + SECS_PER_DAY);
+  command += "&maxResults=" + String(eventCount);
   command += "&access_token=" + accessToken;
 
   Serial.println(command);
   String body = "";
 
-  GoogleCalendarListEvents listener;
+  GoogleCalendarListEvents listener(events, eventCount);
   JsonStreamingParser parser;
   parser.setListener(&listener);
 
@@ -71,5 +67,5 @@ int GoogleCalendar::ListEvents(WiFiClientSecure& client, const String& accessTok
     }
   }
   Serial.println("Gcal done parsing");
-  return 0;
+  return listener.eventCount();
 }

@@ -27,82 +27,107 @@
 #define GCAL_HOST "www.googleapis.com"
 #define GCAL_SSL_PORT 443
 
+class GoogleCalendarEvent {
+public:
+  String summary = "";
+  String location = "";
+};
+
 class GoogleCalendar {
 public:
   GoogleCalendar() {}
 
   // TODO(smklein): Break into more reasonable methods?
-  int ListEvents(WiFiClientSecure& client, const String& accessToken);
+
+  // Returns GoogleCalendarEvents for the next 24 hours,
+  // given an access token to a Google Calendar.
+  //
+  // On success, returns the number of events in |events|,
+  // which is an integer between [0, eventCount].
+  // Returns -1 on error.
+  int ListEvents(WiFiClientSecure& client, const String& accessToken,
+                 GoogleCalendarEvent* events, size_t eventCount);
 private:
 };
 
-
 class GoogleCalendarListEvents : public JsonListener {
 public:
-  GoogleCalendarListEvents() {}
+  GoogleCalendarListEvents(GoogleCalendarEvent* dst, size_t dstSize) :
+    events_(dst), eventCount_(0), eventMax_(dstSize) {}
+
+  int eventCount() const { return eventCount_; }
 
 private:
   virtual void whitespace(char c) override {}
   virtual void startDocument() override {}
 
   virtual void key(String key) override {
-    switch (state) {
+    switch (state_) {
     case PARSER_DEFAULT:
       if (key == "kind") {
-        state = PARSER_KEY_KIND;
+        state_ = PARSER_KEY_KIND;
       }
       break;
     case PARSER_EVENT:
-      if (key == "summary") {
-        state = PARSER_EVENT_KEY_SUMMARY;
-      }
+      if (key == "summary") { state_ = PARSER_EVENT_KEY_SUMMARY; }
+      else if (key == "location") { state_ = PARSER_EVENT_KEY_LOCATION; }
       break;
     }
   }
 
   virtual void value(String value) override {
-    switch (state) {
+    switch (state_) {
     case PARSER_KEY_KIND:
-      if (object_depth == 0 && value == "calendar#event") {
-        state = PARSER_EVENT;
-        object_depth = 1;
-      } else if (object_depth) {
+      if (objectDepth_ == 0 && value == "calendar#event") {
+        state_ = PARSER_EVENT;
+        objectDepth_ = 1;
+      } else if (objectDepth_) {
         // We're parsing an object, get ready for a new key...
-        state = PARSER_EVENT;
+        state_ = PARSER_EVENT;
       } else {
-        // Not parsing an object, fall to default state...
-        state = PARSER_DEFAULT;
+        // Not parsing an object, fall to default state_...
+        state_ = PARSER_DEFAULT;
       }
       break;
     case PARSER_EVENT_KEY_SUMMARY:
-      Serial.println("Value: SUMMARY");
-      Serial.println(value);
-      state = PARSER_EVENT;
+      events_[eventCount_].summary = value;
+      state_ = PARSER_EVENT;
+      break;
+    case PARSER_EVENT_KEY_LOCATION:
+      events_[eventCount_].location = value;
+      state_ = PARSER_EVENT;
       break;
     }
   }
 
   virtual void startObject() override {
-    switch (state) {
+    switch (state_) {
     case PARSER_DEFAULT:
-    case PARSER_ERROR:
+    case PARSER_DONE:
       break;
     default:
       // Currently parsing an event
-      object_depth++;
+      objectDepth_++;
     }
   }
 
   virtual void endObject() override {
-    switch (state) {
+    switch (state_) {
     case PARSER_DEFAULT:
-    case PARSER_ERROR:
+    case PARSER_DONE:
       break;
     default:
       // Currently parsing an event
-      object_depth--;
-      if (object_depth == 0) {
-        state = PARSER_DEFAULT;
+      objectDepth_--;
+      if (objectDepth_ == 0) {
+        eventCount_++;
+        if (eventCount_ == eventMax_) {
+          // We've seen all the events we have room for
+          state_ = PARSER_DONE;
+        } else {
+          // Keep looking for events
+          state_ = PARSER_DEFAULT;
+        }
       }
     }
   }
@@ -113,13 +138,16 @@ private:
 
   enum {
     PARSER_DEFAULT,
-    PARSER_KEY_KIND,          // Saw key "kind"
-    PARSER_EVENT,             // Saw key "kind", value "calendar#event"
-    PARSER_EVENT_KEY_SUMMARY, // Saw key "kind", value "calendar#event", key "summary"
+    PARSER_KEY_KIND,           // Saw key "kind"
+    PARSER_EVENT,              // Saw key "kind", value "calendar#event"
+    PARSER_EVENT_KEY_SUMMARY,  // Saw key "kind", value "calendar#event", key "summary"
+    PARSER_EVENT_KEY_LOCATION, // Saw key "kind", value "calendar#event", key "location"
 
-    PARSER_ERROR,
-  } state = PARSER_DEFAULT;
+    PARSER_DONE,
+  } state_ = PARSER_DEFAULT;
 
-  size_t object_depth = 0;
-  String val;
+  GoogleCalendarEvent* events_;
+  size_t eventCount_;
+  const size_t eventMax_;
+  size_t objectDepth_ = 0;
 };
